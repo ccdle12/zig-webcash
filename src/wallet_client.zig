@@ -1,7 +1,9 @@
 const std = @import("std");
 
+const args = @import("args");
 const crypto = std.crypto;
 const fs = std.fs;
+const fmt = std.fmt;
 const io = std.io;
 const json = std.json;
 const mem = std.mem;
@@ -96,26 +98,6 @@ fn gen_new_master_secret() [32]u8 {
     crypto.random.bytes(&secret_seed);
     return secret_seed;
 }
-
-pub const Arguments = struct {
-    @"insert": ?[]const u8 = null,
-    @"http-address": ?[]const u8 = null,
-    @"node-address": ?[]const u8 = null,
-    @"database-path": ?[]const u8 = null,
-    @"secret-key": ?[]const u8 = null,
-    help: bool = false,
-    version: bool = false,
-
-    pub const shorthands = .{
-        .h = "help",
-        .v = "version",
-        .i = "insert",
-    };
-
-    pub fn parse(gpa: *mem.Allocator) !args.ParseArgsResult(Arguments) {
-        return args.parseForCurrentProcess(Arguments, gpa, .print);
-    }
-};
 
 // TODO: Replace types for log, webcash and unconfirmed, once I figure out
 // their usecase.
@@ -337,6 +319,30 @@ pub fn main() !void {
     };
 
     defer wallet.deinit();
+
+    var argsAllocator = std.heap.page_allocator;
+    const options = args.parseForCurrentProcess(struct {
+        // This declares long options for double hyphen
+        output: ?[]const u8 = null,
+        @"with-offset": bool = false,
+        @"with-hexdump": bool = false,
+        @"intermix-source": bool = false,
+        numberOfBytes: ?i32 = null,
+        signed_number: ?i64 = null,
+        unsigned_number: ?u64 = null,
+        mode: enum { default, special, slow, fast } = .default,
+
+        // This declares short-hand options for single hyphen
+        pub const shorthands = .{
+            .S = "intermix-source",
+            .b = "with-hexdump",
+            .O = "with-offset",
+            .o = "output",
+        };
+    }, argsAllocator, .print) catch return 1;
+    defer options.deinit();
+
+    std.debug.print("executable name: {s}\n", .{options.executable_name});
 }
 
 test "create and load wallet" {
