@@ -97,26 +97,6 @@ fn gen_new_master_secret() [32]u8 {
     return secret_seed;
 }
 
-pub const Arguments = struct {
-    @"insert": ?[]const u8 = null,
-    @"http-address": ?[]const u8 = null,
-    @"node-address": ?[]const u8 = null,
-    @"database-path": ?[]const u8 = null,
-    @"secret-key": ?[]const u8 = null,
-    help: bool = false,
-    version: bool = false,
-
-    pub const shorthands = .{
-        .h = "help",
-        .v = "version",
-        .i = "insert",
-    };
-
-    pub fn parse(gpa: *mem.Allocator) !args.ParseArgsResult(Arguments) {
-        return args.parseForCurrentProcess(Arguments, gpa, .print);
-    }
-};
-
 // TODO: Replace types for log, webcash and unconfirmed, once I figure out
 // their usecase.
 pub const Wallet = struct {
