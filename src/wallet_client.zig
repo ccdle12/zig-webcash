@@ -320,8 +320,7 @@ pub fn main() !void {
 
     defer wallet.deinit();
 
-    var argsAllocator = std.heap.page_allocator;
-    const options = args.parseForCurrentProcess(struct {
+    const options = try args.parseForCurrentProcess(struct {
         // This declares long options for double hyphen
         output: ?[]const u8 = null,
         @"with-offset": bool = false,
@@ -339,7 +338,7 @@ pub fn main() !void {
             .O = "with-offset",
             .o = "output",
         };
-    }, argsAllocator, .print) catch return 1;
+    }, &gpa.allocator, .print);
     defer options.deinit();
 
     std.debug.print("executable name: {s}\n", .{options.executable_name});

@@ -76,7 +76,7 @@ pub fn parseWithVerb(comptime Generic: type, comptime Verb: type, args_iterator:
 }
 
 /// Same as parse, but with anytype argument for testability
-fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterator: anytype, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Generic, MaybeVerb) {
+fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterator: anytype, allocator: *std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Generic, MaybeVerb) {
     var result = ParseArgsResult(Generic, MaybeVerb){
         .arena = std.heap.ArenaAllocator.init(allocator),
         .options = Generic{},
@@ -85,7 +85,7 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
         .executable_name = null,
     };
     errdefer result.arena.deinit();
-    var result_arena_allocator = result.arena.allocator();
+    var result_arena_allocator = &result.arena.allocator;
 
     var arglist = std.ArrayList([:0]const u8).init(allocator);
     errdefer arglist.deinit();
@@ -424,7 +424,7 @@ test "parseInt" {
 }
 
 /// Converts an argument value to the target type.
-fn convertArgumentValue(comptime T: type, allocator: std.mem.Allocator, textInput: []const u8) !T {
+fn convertArgumentValue(comptime T: type, allocator: *std.mem.Allocator, textInput: []const u8) !T {
     switch (@typeInfo(T)) {
         .Optional => |opt| return try convertArgumentValue(opt.child, allocator, textInput),
         .Bool => if (textInput.len > 0)
@@ -475,7 +475,7 @@ fn convertArgumentValue(comptime T: type, allocator: std.mem.Allocator, textInpu
 /// Parses an option value into the correct type.
 fn parseOption(
     comptime Spec: type,
-    arena: std.mem.Allocator,
+    arena: *std.mem.Allocator,
     target_struct: *Spec,
     args: anytype,
     error_handling: ErrorHandling,
@@ -543,10 +543,10 @@ pub const ErrorCollection = struct {
     /// Appends an error to the collection
     fn insert(self: *Self, err: Error) !void {
         var dupe = Error{
-            .option = try self.arena.allocator().dupe(u8, err.option),
+            .option = try self.arena.allocator.dupe(u8, err.option),
             .kind = switch (err.kind) {
                 .invalid_value => |v| Error.Kind{
-                    .invalid_value = try self.arena.allocator().dupe(u8, v),
+                    .invalid_value = try self.arena.allocator.dupe(u8, v),
                 },
                 // flat copy
                 .unknown, .out_of_memory, .unsupported, .invalid_placement, .missing_argument, .missing_executable_name, .unknown_verb => err.kind,

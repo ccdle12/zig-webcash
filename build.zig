@@ -16,7 +16,7 @@ pub fn build(b: *Builder) void {
     const exe = b.addExecutable("wallet_client", "src/wallet_client.zig");
 
     // Add the dependency packages found in /lib.
-    exe.addPackage(.{ .name = "args", .path = FileSource.relative("lib/zig-args/args.zig") });
+    exe.addPackage(.{ .name = "args", .path = "lib/zig-args/args.zig" });
 
     exe.setTarget(target);
     exe.setBuildMode(mode);
