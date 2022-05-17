@@ -12,6 +12,8 @@ const testing = std.testing;
 const ArrayList = std.ArrayList;
 const AutoHashMap = std.hash_map.AutoHashMap;
 const File = std.fs.File;
+const fmtSliceHexLower = fmt.fmtSliceHexLower;
+const hexToBytes = fmt.hexToBytes;
 
 pub const wallet_name = "default_wallet.webcash";
 
@@ -165,10 +167,14 @@ pub const Wallet = struct {
         try json_map.putNoClobber("legalese", .{ .Object = legalese });
 
         try json_map.putNoClobber("webcash", .{ .String = self.webcash });
+
         try json_map.putNoClobber("unconfirmed", .{ .String = self.unconfirmed });
-        try json_map.putNoClobber("master_secret", .{
-            .String = &self.master_secret,
-        });
+
+        var str = std.ArrayList(u8).init(self.gpa);
+        defer str.deinit();
+
+        try str.writer().print("{}", .{fmtSliceHexLower(&self.master_secret)});
+        try json_map.putNoClobber("master_secret", .{ .String = str.items });
 
         var wallet_depths = std.json.ObjectMap.init(self.gpa);
         defer wallet_depths.deinit();
@@ -217,11 +223,14 @@ pub const Wallet = struct {
         const unconfirmed = tree.root.Object.get("unconfirmed").?.String;
         var wallet_depths_iter = tree.root.Object.get("walletdepths").?.Object.iterator();
 
-        var master_secret: [32]u8 = undefined;
-        for (tree.root.Object.get("master_secret").?.Array.items) |item, index| {
-            if (index > master_secret.len) break;
-            master_secret[index] = @intCast(u8, item.Integer);
-        }
+        const master_secret = blk: {
+            var secret: [32]u8 = undefined;
+
+            const json_secret = tree.root.Object.get("master_secret").?.String;
+            _ = try hexToBytes(&secret, json_secret);
+
+            break :blk secret;
+        };
 
         var legal_acks = AutoHashMap(Legalese, bool).init(gpa);
         errdefer legal_acks.deinit();
@@ -248,6 +257,33 @@ pub const Wallet = struct {
         };
     }
 };
+
+test "create and load wallet" {
+    var wallet = try Wallet.init(testing.allocator);
+    defer wallet.deinit();
+
+    try wallet.save("tmp-test-wallet");
+
+    var loaded_wallet = try Wallet.load(testing.allocator, "tmp-test-wallet");
+    defer loaded_wallet.deinit();
+
+    try testing.expectEqualSlices(u8, wallet.log, loaded_wallet.log);
+    try testing.expectEqualSlices(u8, wallet.webcash, loaded_wallet.webcash);
+    try testing.expectEqualSlices(u8, wallet.unconfirmed, loaded_wallet.unconfirmed);
+    try testing.expectEqualSlices(u8, &wallet.master_secret, &loaded_wallet.master_secret);
+
+    for (Legalese.items) |item| {
+        try testing.expect(wallet.legal_acks.contains(item));
+        try testing.expect(loaded_wallet.legal_acks.contains(item));
+    }
+
+    for (ChainCode.items) |item| {
+        try testing.expect(wallet.wallet_depths.contains(item));
+        try testing.expect(loaded_wallet.wallet_depths.contains(item));
+    }
+
+    try fs.cwd().deleteFile("tmp-test-wallet");
+}
 
 pub fn prompt_legal_acks(wallet: *Wallet) !void {
     if (check_legal_agreements(wallet)) {
@@ -300,6 +336,61 @@ pub fn file_exists(file_name: []const u8) bool {
     return true;
 }
 
+pub const SecretWebcash = struct {
+    // TODO: NOT SURE IF THIS SHOULD BE A DIFFERENT INT VALUE
+    amount: u64,
+    secret: [32]u8,
+
+    pub fn from_str(input: []const u8) !SecretWebcash {
+        var iter = mem.split(input, ":");
+
+        var amount_part = iter.next().?;
+        var public_or_secret = iter.next().?;
+        var secret_part = iter.next().?;
+
+        var secret: [32]u8 = undefined;
+        _ = try hexToBytes(&secret, secret_part);
+
+        const amount = blk: {
+            if (mem.startsWith(u8, amount_part, "e"))
+                break :blk try fmt.parseInt(u64, amount_part[1..], 10);
+
+            break :blk try fmt.parseInt(u64, amount_part, 10);
+        };
+
+        return SecretWebcash{
+            .amount = amount,
+            .secret = secret,
+        };
+    }
+
+    pub fn to_str(self: @This(), gpa: *mem.Allocator) !ArrayList(u8) {
+        var str = std.ArrayList(u8).init(gpa);
+        try str.writer().print("e{}:secret:{}", .{
+            self.amount,
+            fmtSliceHexLower(&self.secret),
+        });
+
+        return str;
+    }
+};
+
+test "se/deserialize SecretWebcash from str" {
+    const input = "e1000:secret:ff6cfa803d9ef934cb503295902032c6b1976c0c7313d44b0ca7c6dce268777e";
+    const secret_webcash = try SecretWebcash.from_str(input);
+
+    try testing.expectEqual(secret_webcash.amount, 1000);
+
+    var expected_secret: [32]u8 = undefined;
+    _ = try hexToBytes(&expected_secret, "ff6cfa803d9ef934cb503295902032c6b1976c0c7313d44b0ca7c6dce268777e");
+    try testing.expectEqualSlices(u8, &secret_webcash.secret, &expected_secret);
+
+    var secret_webcash_str = try secret_webcash.to_str(testing.allocator);
+    defer secret_webcash_str.deinit();
+
+    try testing.expectEqualSlices(u8, secret_webcash_str.items, input);
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
@@ -342,31 +433,4 @@ pub fn main() !void {
     defer options.deinit();
 
     std.debug.print("executable name: {s}\n", .{options.executable_name});
-}
-
-test "create and load wallet" {
-    var wallet = try Wallet.init(testing.allocator);
-    defer wallet.deinit();
-
-    try wallet.save("tmp-test-wallet");
-
-    var loaded_wallet = try Wallet.load(testing.allocator, "tmp-test-wallet");
-    defer loaded_wallet.deinit();
-
-    try testing.expectEqualSlices(u8, wallet.log, loaded_wallet.log);
-    try testing.expectEqualSlices(u8, wallet.webcash, loaded_wallet.webcash);
-    try testing.expectEqualSlices(u8, wallet.unconfirmed, loaded_wallet.unconfirmed);
-    try testing.expectEqualSlices(u8, &wallet.master_secret, &loaded_wallet.master_secret);
-
-    for (Legalese.items) |item| {
-        try testing.expect(wallet.legal_acks.contains(item));
-        try testing.expect(loaded_wallet.legal_acks.contains(item));
-    }
-
-    for (ChainCode.items) |item| {
-        try testing.expect(wallet.wallet_depths.contains(item));
-        try testing.expect(loaded_wallet.wallet_depths.contains(item));
-    }
-
-    try fs.cwd().deleteFile("tmp-test-wallet");
 }
