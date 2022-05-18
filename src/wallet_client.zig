@@ -113,7 +113,7 @@ pub const Wallet = struct {
     log: []const u8,
 
     // TODO:?
-    webcash: []const u8,
+    webcash: ArrayList(SecretWebcash),
 
     // TODO:?
     unconfirmed: []const u8,
@@ -136,7 +136,7 @@ pub const Wallet = struct {
         return Wallet{
             .log = "foo",
             .legal_acks = legal_acks,
-            .webcash = "foo",
+            .webcash = ArrayList(SecretWebcash).init(gpa),
             .unconfirmed = "foo",
             .master_secret = gen_new_master_secret(),
             .wallet_depths = wallet_depths,
@@ -147,61 +147,78 @@ pub const Wallet = struct {
     pub fn deinit(self: *Wallet) void {
         self.legal_acks.deinit();
         self.wallet_depths.deinit();
+        self.webcash.deinit();
     }
 
-    pub fn json_str(self: @This(), writer: anytype) !void {
-        var json_map = json.ObjectMap.init(self.gpa);
-        defer json_map.deinit();
+    pub fn json_str(self: @This(), alloc: *mem.Allocator, writer: anytype) !void {
+        var json_map = json.ObjectMap.init(alloc);
 
         try json_map.putNoClobber("log", .{ .String = self.log });
 
-        var legalese = json.ObjectMap.init(self.gpa);
-        defer legalese.deinit();
+        var legalese = blk: {
+            var map = json.ObjectMap.init(alloc);
 
-        var legal_acks_iter = self.legal_acks.iterator();
-        while (legal_acks_iter.next()) |entry| {
-            try legalese.putNoClobber(entry.key_ptr.*.get_key(), .{
-                .Bool = entry.value_ptr.*,
-            });
-        }
+            var iter = self.legal_acks.iterator();
+            while (iter.next()) |entry| {
+                try map.putNoClobber(entry.key_ptr.*.get_key(), .{
+                    .Bool = entry.value_ptr.*,
+                });
+            }
+
+            break :blk map;
+        };
         try json_map.putNoClobber("legalese", .{ .Object = legalese });
 
-        try json_map.putNoClobber("webcash", .{ .String = self.webcash });
+        var webcash = blk: {
+            var arr = json.Array.init(alloc);
+
+            for (self.webcash.items) |webcash| {
+                var str = try webcash.to_str(alloc);
+                try arr.append(.{ .String = str.items });
+            }
+
+            break :blk arr;
+        };
+        try json_map.putNoClobber("webcash", .{ .Array = webcash });
 
         try json_map.putNoClobber("unconfirmed", .{ .String = self.unconfirmed });
 
-        var str = std.ArrayList(u8).init(self.gpa);
-        defer str.deinit();
+        var master_secret = blk: {
+            var list = std.ArrayList(u8).init(alloc);
+            try list.writer().print("{}", .{fmtSliceHexLower(&self.master_secret)});
 
-        try str.writer().print("{}", .{fmtSliceHexLower(&self.master_secret)});
-        try json_map.putNoClobber("master_secret", .{ .String = str.items });
+            break :blk list;
+        };
+        try json_map.putNoClobber("master_secret", .{ .String = master_secret.items });
 
-        var wallet_depths = std.json.ObjectMap.init(self.gpa);
-        defer wallet_depths.deinit();
+        var wallet_depths = blk: {
+            var map = std.json.ObjectMap.init(alloc);
 
-        var wallet_depths_iter = self.wallet_depths.iterator();
-        while (wallet_depths_iter.next()) |entry| {
-            try wallet_depths.putNoClobber(entry.key_ptr.*.get_key(), .{
-                .Integer = entry.value_ptr.*,
-            });
-        }
+            var iter = self.wallet_depths.iterator();
+            while (iter.next()) |entry| {
+                try map.putNoClobber(entry.key_ptr.*.get_key(), .{
+                    .Integer = entry.value_ptr.*,
+                });
+            }
+
+            break :blk map;
+        };
         try json_map.putNoClobber("walletdepths", .{ .Object = wallet_depths });
 
         try (std.json.Value{ .Object = json_map }).jsonStringify(.{}, writer);
     }
 
     pub fn save(self: @This(), file_name: []const u8) !void {
-        var str = std.ArrayList(u8).init(self.gpa);
-        defer str.deinit();
-        try self.json_str(str.writer());
-
-        const file = try fs.cwd().createFile(
-            file_name,
-            File.CreateFlags{ .read = true },
-        );
+        const file = try fs.cwd().createFile(file_name, .{});
         defer file.close();
 
-        _ = try file.write(str.items);
+        // The JSON string is short-lived, meaning I just want to generate the
+        // JSON String, write to file and throw it away. The arena allocator
+        // is used so that we can throw everything on to this heap and deinit all
+        // of it after use. Is there a better way to do this?
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        try self.json_str(&arena.allocator, file.writer());
     }
 
     pub fn load(gpa: *mem.Allocator, file_name: []const u8) !Wallet {
@@ -218,11 +235,20 @@ pub const Wallet = struct {
         defer tree.deinit();
 
         const log = tree.root.Object.get("log").?.String;
-        var legalese_iter = tree.root.Object.get("legalese").?.Object.iterator();
-        const webcash = tree.root.Object.get("webcash").?.String;
-        const unconfirmed = tree.root.Object.get("unconfirmed").?.String;
-        var wallet_depths_iter = tree.root.Object.get("walletdepths").?.Object.iterator();
 
+        const webcash = blk: {
+            var webcash = ArrayList(SecretWebcash).init(gpa);
+
+            var webcash_iter = tree.root.Object.get("webcash").?.Array.items;
+            for (webcash_iter) |entry| {
+                const cash = try SecretWebcash.from_str(entry.String);
+                try webcash.append(cash);
+            }
+
+            break :blk webcash;
+        };
+
+        const unconfirmed = tree.root.Object.get("unconfirmed").?.String;
         const master_secret = blk: {
             var secret: [32]u8 = undefined;
 
@@ -232,19 +258,31 @@ pub const Wallet = struct {
             break :blk secret;
         };
 
-        var legal_acks = AutoHashMap(Legalese, bool).init(gpa);
-        errdefer legal_acks.deinit();
-        while (legalese_iter.next()) |entry| {
-            const key = try Legalese.from_str(entry.key_ptr.*);
-            try legal_acks.put(key, entry.value_ptr.*.Bool);
-        }
+        var legal_acks = blk: {
+            var legal_acks = AutoHashMap(Legalese, bool).init(gpa);
+            errdefer legal_acks.deinit();
 
-        var wallet_depths = AutoHashMap(ChainCode, u32).init(gpa);
-        errdefer wallet_depths.deinit();
-        while (wallet_depths_iter.next()) |entry| {
-            const key = try ChainCode.from_str(entry.key_ptr.*);
-            try wallet_depths.put(key, @intCast(u32, entry.value_ptr.*.Integer));
-        }
+            var legal_acks_itr = tree.root.Object.get("legalese").?.Object.iterator();
+            while (legal_acks_itr.next()) |entry| {
+                const legalese = try Legalese.from_str(entry.key_ptr.*);
+                try legal_acks.put(legalese, entry.value_ptr.*.Bool);
+            }
+
+            break :blk legal_acks;
+        };
+
+        var wallet_depths = blk: {
+            var wallet_depths = AutoHashMap(ChainCode, u32).init(gpa);
+            errdefer wallet_depths.deinit();
+
+            var wallet_depths_iter = tree.root.Object.get("walletdepths").?.Object.iterator();
+            while (wallet_depths_iter.next()) |entry| {
+                const chaincode = try ChainCode.from_str(entry.key_ptr.*);
+                try wallet_depths.put(chaincode, @intCast(u32, entry.value_ptr.*.Integer));
+            }
+
+            break :blk wallet_depths;
+        };
 
         return Wallet{
             .log = log,
@@ -262,13 +300,40 @@ test "create and load wallet" {
     var wallet = try Wallet.init(testing.allocator);
     defer wallet.deinit();
 
+    try wallet.webcash.append(.{ .amount = 10, .secret = [_]u8{0} ** 32 });
+    try wallet.webcash.append(.{ .amount = 500, .secret = [_]u8{1} ** 32 });
+
+    var expected_secret: [32]u8 = undefined;
+    _ = try hexToBytes(&expected_secret, "ff6cfa803d9ef934cb503295902032c6b1976c0c7313d44b0ca7c6dce268777e");
+    try wallet.webcash.append(.{ .amount = 700, .secret = expected_secret });
+
     try wallet.save("tmp-test-wallet");
 
     var loaded_wallet = try Wallet.load(testing.allocator, "tmp-test-wallet");
     defer loaded_wallet.deinit();
 
     try testing.expectEqualSlices(u8, wallet.log, loaded_wallet.log);
-    try testing.expectEqualSlices(u8, wallet.webcash, loaded_wallet.webcash);
+
+    try testing.expectEqual(loaded_wallet.webcash.items.len, 3);
+    try testing.expectEqual(loaded_wallet.webcash.items[0].amount, 10);
+    try testing.expectEqual(loaded_wallet.webcash.items[1].amount, 500);
+    try testing.expectEqual(loaded_wallet.webcash.items[2].amount, 700);
+
+    try testing.expectEqualSlices(
+        u8,
+        &loaded_wallet.webcash.items[0].secret,
+        &([_]u8{0} ** 32),
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &loaded_wallet.webcash.items[1].secret,
+        &([_]u8{1} ** 32),
+    );
+    try testing.expectEqualSlices(
+        u8,
+        &loaded_wallet.webcash.items[2].secret,
+        &expected_secret,
+    );
     try testing.expectEqualSlices(u8, wallet.unconfirmed, loaded_wallet.unconfirmed);
     try testing.expectEqualSlices(u8, &wallet.master_secret, &loaded_wallet.master_secret);
 
@@ -403,12 +468,10 @@ pub fn main() !void {
             try wallet.save(wallet_name);
 
             break :blk wallet;
-        } else {
-            var wallet = try Wallet.load(&gpa.allocator, wallet_name);
-            break :blk wallet;
         }
-    };
 
+        break :blk try Wallet.load(&gpa.allocator, wallet_name);
+    };
     defer wallet.deinit();
 
     const options = try args.parseForCurrentProcess(struct {
