@@ -474,26 +474,33 @@ pub fn main() !void {
     };
     defer wallet.deinit();
 
-    const options = try args.parseForCurrentProcess(struct {
-        // This declares long options for double hyphen
-        output: ?[]const u8 = null,
-        @"with-offset": bool = false,
-        @"with-hexdump": bool = false,
-        @"intermix-source": bool = false,
-        numberOfBytes: ?i32 = null,
-        signed_number: ?i64 = null,
-        unsigned_number: ?u64 = null,
-        mode: enum { default, special, slow, fast } = .default,
+    const arguments = try args.parseForCurrentProcess(
+        struct {
+            // This declares long options for double hyphen
+            help: bool = false,
+            insert: ?[]const u8 = null,
 
-        // This declares short-hand options for single hyphen
-        pub const shorthands = .{
-            .S = "intermix-source",
-            .b = "with-hexdump",
-            .O = "with-offset",
-            .o = "output",
-        };
-    }, &gpa.allocator, .print);
-    defer options.deinit();
+            // This declares short-hand options for single hyphen
+            pub const shorthands = .{
+                .h = "help",
+                .i = "insert",
+            };
+        },
+        &gpa.allocator,
+        .print,
+    );
+    defer arguments.deinit();
 
-    std.debug.print("executable name: {s}\n", .{options.executable_name});
+    // --help or -h
+    if (arguments.options.help) {
+        std.debug.print("Options:", .{});
+        inline for (std.meta.fields(@TypeOf(arguments.options))) |fld| {
+            std.debug.print("\t{s}\n", .{fld.name});
+        }
+    }
+
+    // --insert or -i
+    if (arguments.options.insert) |webcash_str| {
+        std.debug.print("DEBUG: {s}\n", .{webcash_str});
+    }
 }
