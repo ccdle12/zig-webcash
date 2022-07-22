@@ -547,12 +547,15 @@ pub const Wallet = struct {
     }
 };
 
-// TODO: This requires an existing wallet for this test to pass.
 test "generate_new_secret" {
-    var wallet = try Wallet.load(testing.allocator, "default_wallet.webcash");
+    var wallet = try Wallet.init(testing.allocator);
     defer wallet.deinit();
+    try wallet.save("tmp-test-wallet");
 
-    try wallet.generate_new_secret(ChainCode.receive);
+    var wallet_loaded = try Wallet.load(testing.allocator, "tmp-test-wallet");
+    defer wallet_loaded.deinit();
+
+    try wallet_loaded.generate_new_secret(ChainCode.receive);
 }
 
 test "create and load wallet" {
