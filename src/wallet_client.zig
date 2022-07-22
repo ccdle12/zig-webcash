@@ -38,30 +38,21 @@ pub const ChainCode = enum(u8) {
         InvalidVariant,
     };
 
-    pub fn get_key(self: ChainCode) []const u8 {
-        return switch (self) {
-            ChainCode.receive => "RECEIVE",
-            ChainCode.pay => "PAY",
-            ChainCode.change => "CHANGE",
-            ChainCode.mining => "MINING",
-        };
-    }
-
     // TODO: make input to upper or lower
     pub fn from_str(input: []const u8) !ChainCode {
-        if (mem.eql(u8, input, "RECEIVE")) {
+        if (mem.eql(u8, input, "receive")) {
             return ChainCode.receive;
         }
 
-        if (mem.eql(u8, input, "PAY")) {
+        if (mem.eql(u8, input, "pay")) {
             return ChainCode.pay;
         }
 
-        if (mem.eql(u8, input, "CHANGE")) {
+        if (mem.eql(u8, input, "change")) {
             return ChainCode.change;
         }
 
-        if (mem.eql(u8, input, "MINING")) {
+        if (mem.eql(u8, input, "mining")) {
             return ChainCode.mining;
         }
 
@@ -77,12 +68,6 @@ pub const Legalese = enum {
     pub const LegaleseError = error{
         InvalidVariant,
     };
-
-    pub fn get_key(self: Legalese) []const u8 {
-        return switch (self) {
-            Legalese.terms => "terms",
-        };
-    }
 
     pub fn get_value(self: Legalese) []const u8 {
         return switch (self) {
@@ -113,12 +98,6 @@ pub const LogType = enum {
         InvalidVariant,
     };
 
-    pub fn get_key(self: LogType) []const u8 {
-        return switch (self) {
-            LogType.insert => "insert",
-        };
-    }
-
     // TODO: make input to upper or lower
     pub fn from_str(input: []const u8) !LogType {
         if (mem.eql(u8, input, "insert")) {
@@ -148,7 +127,7 @@ pub const LogItem = struct {
 
     /// Serializes the LogItem to a JSON map.
     pub fn to_json_map(self: LogItem, json_map: *json.ObjectMap) !void {
-        try json_map.putNoClobber("type", .{ .String = self.log_type.get_key() });
+        try json_map.putNoClobber("type", .{ .String = @tagName(self.log_type) });
 
         // TODO: Use memo optional instead of empty string
         try json_map.putNoClobber("memo", .{ .String = "" });
@@ -247,9 +226,9 @@ pub const Wallet = struct {
             var map = json.ObjectMap.init(alloc);
 
             var iter = self.legal_acks.iterator();
-            while (iter.next()) |entry| {
-                try map.putNoClobber(entry.key_ptr.*.get_key(), .{
-                    .Bool = entry.value_ptr.*,
+            while (iter.next()) |legal_item| {
+                try map.putNoClobber(@tagName(legal_item.key_ptr.*), .{
+                    .Bool = legal_item.value_ptr.*,
                 });
             }
 
@@ -296,9 +275,9 @@ pub const Wallet = struct {
             var map = std.json.ObjectMap.init(alloc);
 
             var iter = self.wallet_depths.iterator();
-            while (iter.next()) |entry| {
-                try map.putNoClobber(entry.key_ptr.*.get_key(), .{
-                    .Integer = entry.value_ptr.*,
+            while (iter.next()) |chaincode_item| {
+                try map.putNoClobber(@tagName(chaincode_item.key_ptr.*), .{
+                    .Integer = chaincode_item.value_ptr.*,
                 });
             }
 
@@ -386,10 +365,10 @@ pub const Wallet = struct {
             var legal_acks = AutoHashMap(Legalese, bool).init(gpa);
             errdefer legal_acks.deinit();
 
-            var legal_acks_itr = tree.root.Object.get("legalese").?.Object.iterator();
-            while (legal_acks_itr.next()) |entry| {
-                const legalese = try Legalese.from_str(entry.key_ptr.*);
-                try legal_acks.put(legalese, entry.value_ptr.*.Bool);
+            var iter = tree.root.Object.get("legalese").?.Object.iterator();
+            while (iter.next()) |legal_item| {
+                const legalese = try Legalese.from_str(legal_item.key_ptr.*);
+                try legal_acks.put(legalese, legal_item.value_ptr.*.Bool);
             }
 
             break :blk legal_acks;
@@ -399,10 +378,10 @@ pub const Wallet = struct {
             var wallet_depths = AutoHashMap(ChainCode, u32).init(gpa);
             errdefer wallet_depths.deinit();
 
-            var wallet_depths_iter = tree.root.Object.get("walletdepths").?.Object.iterator();
-            while (wallet_depths_iter.next()) |entry| {
-                const chaincode = try ChainCode.from_str(entry.key_ptr.*);
-                try wallet_depths.put(chaincode, @intCast(u32, entry.value_ptr.*.Integer));
+            var iter = tree.root.Object.get("walletdepths").?.Object.iterator();
+            while (iter.next()) |chaincode_item| {
+                const chaincode = try ChainCode.from_str(chaincode_item.key_ptr.*);
+                try wallet_depths.put(chaincode, @intCast(u32, chaincode_item.value_ptr.*.Integer));
             }
 
             break :blk wallet_depths;
@@ -475,8 +454,8 @@ pub const Wallet = struct {
                 .{},
             );
         } else {
-            for (Legalese.items) |item| {
-                std.debug.print("Discloure {s}: {s}\n", .{ item.get_key(), item.get_value() });
+            for (Legalese.items) |legal_item| {
+                std.debug.print("Discloure {s}: {s}\n", .{ legal_item.get_key(), legal_item.get_value() });
 
                 const stdin = io.getStdIn().reader();
                 const stdout = io.getStdOut().writer();
