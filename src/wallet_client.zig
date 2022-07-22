@@ -146,30 +146,26 @@ pub const LogItem = struct {
     // TODO: doc comment
     output_webcash: []const u8,
 
-    // TODO:
-    pub fn json_obj_map(self: LogItem, json_map: *json.ObjectMap) !void {
-        // var json_map = json.ObjectMap.init(alloc);
-
+    /// Serializes the LogItem to a JSON map.
+    pub fn to_json_map(self: LogItem, json_map: *json.ObjectMap) !void {
         try json_map.putNoClobber("type", .{ .String = self.log_type.get_key() });
+
         // TODO: Use memo optional instead of empty string
         try json_map.putNoClobber("memo", .{ .String = "" });
         try json_map.putNoClobber("amount", .{ .Integer = @intCast(i64, self.amount) });
 
-        // TODO: Do I need to make it a lower hex string.
         try json_map.putNoClobber("input_webcash", .{ .String = self.input_webcash });
         try json_map.putNoClobber("output_webcash", .{ .String = self.output_webcash });
-        // return json_map;
     }
 
-    // TODO: Doc comments
-    // TODO: Avoid a copy of obj_map
-    pub fn from_obj_map(obj_map: json.ObjectMap) !LogItem {
+    // Deserialize a JSON map to a LogItem.
+    pub fn from_json_map(json_map: *json.ObjectMap) !LogItem {
         return LogItem{
-            .log_type = try LogType.from_str(obj_map.get("type").?.String),
-            .memo = obj_map.get("memo").?.String,
-            .amount = @intCast(u64, obj_map.get("amount").?.Integer),
-            .input_webcash = obj_map.get("input_webcash").?.String,
-            .output_webcash = obj_map.get("output_webcash").?.String,
+            .log_type = try LogType.from_str(json_map.get("type").?.String),
+            .memo = json_map.get("memo").?.String,
+            .amount = @intCast(u64, json_map.get("amount").?.Integer),
+            .input_webcash = json_map.get("input_webcash").?.String,
+            .output_webcash = json_map.get("output_webcash").?.String,
         };
     }
 };
@@ -238,7 +234,7 @@ pub const Wallet = struct {
             var arr = json.Array.init(alloc);
             for (self.log.items) |log| {
                 var log_map = json.ObjectMap.init(alloc);
-                try log.json_obj_map(&log_map);
+                try log.to_json_map(&log_map);
 
                 try arr.append(.{ .Object = log_map });
             }
@@ -344,8 +340,8 @@ pub const Wallet = struct {
             var log = ArrayList(LogItem).init(gpa);
 
             var log_iter = tree.root.Object.get("log").?.Array.items;
-            for (log_iter) |entry| {
-                const log_item = try LogItem.from_obj_map(entry.Object);
+            for (log_iter) |*entry| {
+                const log_item = try LogItem.from_json_map(&entry.Object);
                 try log.append(log_item);
             }
 
