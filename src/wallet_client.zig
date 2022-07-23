@@ -180,13 +180,10 @@ pub const Wallet = struct {
         var wallet_depths = AutoHashMap(ChainCode, u32).init(gpa);
         for (ChainCode.items) |code| try wallet_depths.put(code, 0);
 
-        // TODO: Se/Deserialize log correctly
         return Wallet{
             .log = ArrayList(LogItem).init(gpa),
             .legal_acks = legal_acks,
             .webcash = ArrayList(SecretWebcash).init(gpa),
-            // TODO:
-            // .unconfirmed = "",
             .unconfirmed = ArrayList(SecretWebcash).init(gpa),
             .master_secret = gen_new_master_secret(),
             .wallet_depths = wallet_depths,
@@ -198,15 +195,11 @@ pub const Wallet = struct {
         self.legal_acks.deinit();
         self.wallet_depths.deinit();
         self.webcash.deinit();
-
-        // TODO:
         self.unconfirmed.deinit();
-
-        // TODO:
         self.log.deinit();
     }
 
-    pub fn json_str(self: @This(), alloc: *mem.Allocator, writer: anytype) !void {
+    pub fn to_json_str(self: Wallet, alloc: *mem.Allocator, writer: anytype) !void {
         var json_map = json.ObjectMap.init(alloc);
 
         var log = blk: {
@@ -236,7 +229,6 @@ pub const Wallet = struct {
         };
         try json_map.putNoClobber("legalese", .{ .Object = legalese });
 
-        // TODO: Function or anonymous function???
         var webcash = blk: {
             var arr = json.Array.init(alloc);
 
@@ -249,8 +241,6 @@ pub const Wallet = struct {
         };
         try json_map.putNoClobber("webcash", .{ .Array = webcash });
 
-        // TODO:
-        // try json_map.putNoClobber("unconfirmed", .{ .String = self.unconfirmed });
         var unconfirmed = blk: {
             var arr = json.Array.init(alloc);
 
@@ -288,17 +278,17 @@ pub const Wallet = struct {
         try (std.json.Value{ .Object = json_map }).jsonStringify(.{}, writer);
     }
 
-    pub fn save(self: @This(), file_name: []const u8) !void {
+    pub fn save(self: Wallet, file_name: []const u8) !void {
         const file = try fs.cwd().createFile(file_name, .{});
         defer file.close();
 
         // The JSON string is short-lived, meaning I just want to generate the
-        // JSON String, write to file and throw it away. The arena allocator
+        // JSON String, write to file and then throw it away. The arena allocator
         // is used so that we can throw everything on to this heap and deinit all
         // of it after use. Is there a better way to do this?
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
-        try self.json_str(&arena.allocator, file.writer());
+        try self.to_json_str(&arena.allocator, file.writer());
     }
 
     pub fn load(gpa: *mem.Allocator, file_name: []const u8) !Wallet {
@@ -307,12 +297,12 @@ pub const Wallet = struct {
 
         // TODO: Maybe make this an Arraylist???
         var str: [10240]u8 = undefined;
-        const num_read = try file.readAll(&str);
+        const bytes_read = try file.readAll(&str);
 
         var parser = std.json.Parser.init(gpa, false);
         defer parser.deinit();
 
-        var tree = try parser.parse(str[0..num_read]);
+        var tree = try parser.parse(str[0..bytes_read]);
         defer tree.deinit();
 
         const log = blk: {
@@ -339,8 +329,6 @@ pub const Wallet = struct {
             break :blk webcash;
         };
 
-        // TODO:
-        // const unconfirmed = tree.root.Object.get("unconfirmed").?.String;
         const unconfirmed = blk: {
             var unconfirmed = ArrayList(SecretWebcash).init(gpa);
 
@@ -512,7 +500,7 @@ pub const Wallet = struct {
         defer wallet_depth_bytes.deinit();
 
         const wallet_depth = self.wallet_depths.get(chain_code).?;
-        std.debug.print("DEBUG: wallet depth {d}\n", .{wallet_depth});
+        std.debug.print("\nDEBUG: wallet depth {d}\n", .{wallet_depth});
         try wallet_depth_bytes.writer().writeIntBig(u64, wallet_depth);
 
         new_secret.update(wallet_depth_bytes.items);
@@ -581,6 +569,7 @@ test "create and load wallet" {
         &expected_secret,
     );
 
+    // TODO:
     // Check the unconfirmed array was updated.
     // try testing.expectEqual(loaded_wallet.unconfirmed.items.len, 3);
 
@@ -642,7 +631,7 @@ pub const SecretWebcash = struct {
         };
     }
 
-    pub fn to_str(self: @This(), gpa: *mem.Allocator) !ArrayList(u8) {
+    pub fn to_str(self: SecretWebcash, gpa: *mem.Allocator) !ArrayList(u8) {
         var str = std.ArrayList(u8).init(gpa);
         try str.writer().print("e{}:secret:{}", .{
             self.amount,
@@ -689,11 +678,11 @@ pub fn main() !void {
 
     const arguments = try args.parseForCurrentProcess(
         struct {
-            // This declares long options for double hyphen
+            // This declares long options for double hyphen.
             help: bool = false,
             insert: ?[]const u8 = null,
 
-            // This declares short-hand options for single hyphen
+            // This declares short-hand options for single hyphen.
             pub const shorthands = .{
                 .h = "help",
                 .i = "insert",
