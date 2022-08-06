@@ -443,7 +443,7 @@ pub const Wallet = struct {
             );
         } else {
             for (Legalese.items) |legal_item| {
-                std.debug.print("Discloure {s}: {s}\n", .{ legal_item.get_key(), legal_item.get_value() });
+                std.debug.print("Discloure {s}: {s}\n", .{ @tagName(legal_item), legal_item.get_value() });
 
                 const stdin = io.getStdIn().reader();
                 const stdout = io.getStdOut().writer();
@@ -453,7 +453,7 @@ pub const Wallet = struct {
                 var buf: [10]u8 = undefined;
                 if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |user_input| {
                     if (mem.eql(u8, user_input, "y")) {
-                        try self.legal_acks.put(item, true);
+                        try self.legal_acks.put(legal_item, true);
                     } else {
                         std.debug.print(
                             "Unfortunately, you must acknowledge and agree to all agreements to use webcash.\n",
